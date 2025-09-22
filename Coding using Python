@@ -1,0 +1,122 @@
+# Step 1: Import Libraries
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+from sklearn.manifold import TSNE
+from scipy.cluster.hierarchy import dendrogram, linkage
+import warnings
+warnings.filterwarnings("ignore")
+
+# Step 2: Load Dataset
+
+df = pd.read_excel("OnlineRetail.xlsx")  # Download from Kaggle
+print("Shape:", df.shape)
+df.head()
+
+# Step 3: Data Cleaning
+
+# Remove missing Customer IDs
+df = df.dropna(subset=['CustomerID'])
+
+# Remove negative quantities (returns)
+df = df[df['Quantity'] > 0]
+
+# Add total amount
+df["TotalPrice"] = df["Quantity"] * df["UnitPrice"]
+
+# Convert date to datetime
+df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+
+# Step 4: Feature Engineering (RFM Model)
+
+ref_date = df['InvoiceDate'].max() + pd.Timedelta(days=1)
+
+rfm = df.groupby('CustomerID').agg({
+    'InvoiceDate': lambda x: (ref_date - x.max()).days,  # Recency
+    'InvoiceNo': 'count',                               # Frequency
+    'TotalPrice': 'sum'                                 # Monetary
+})
+
+rfm.rename(columns={'InvoiceDate':'Recency',
+                    'InvoiceNo':'Frequency',
+                    'TotalPrice':'Monetary'}, inplace=True)
+
+rfm.head()
+
+# Step 5: Standardization
+
+scaler = StandardScaler()
+rfm_scaled = scaler.fit_transform(rfm)
+
+# Step 6: Dimensionality Reduction with PCA
+
+pca = PCA(n_components=2)
+rfm_pca = pca.fit_transform(rfm_scaled)
+
+print("Explained Variance:", pca.explained_variance_ratio_)
+
+# Step 7: K-Means Clustering
+
+# Elbow method
+inertia = []
+for k in range(2,10):
+    kmeans = KMeans(n_clusters=k, random_state=42).fit(rfm_pca)
+    inertia.append(kmeans.inertia_)
+
+plt.plot(range(2,10), inertia, 'bo-')
+plt.xlabel("K")
+plt.ylabel("Inertia")
+plt.title("Elbow Method")
+plt.show()
+
+
+# Step 8: Final Clustering
+
+kmeans = KMeans(n_clusters=4, random_state=42)
+clusters = kmeans.fit_predict(rfm_pca)
+
+rfm["Cluster"] = clusters
+
+# Visualize
+sns.scatterplot(x=rfm_pca[:,0], y=rfm_pca[:,1], hue=clusters, palette="Set2")
+plt.title("Customer Segmentation (K-Means)")
+plt.show()
+
+# Step 9: Hierarchical Clustering
+
+linked = linkage(rfm_scaled[:200], method='ward')  # sample
+plt.figure(figsize=(10,6))
+dendrogram(linked, orientation='top', distance_sort='descending')
+plt.title("Hierarchical Dendrogram")
+plt.show()
+
+# Step 10: t-SNE Visualization
+
+tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+rfm_tsne = tsne.fit_transform(rfm_scaled)
+
+sns.scatterplot(x=rfm_tsne[:,0], y=rfm_tsne[:,1], hue=clusters, palette="Set2")
+plt.title("t-SNE Visualization of Clusters")
+plt.show()
+
+# Step 11: Cluster Evaluation
+
+silhouette = silhouette_score(rfm_scaled, clusters)
+dbi = davies_bouldin_score(rfm_scaled, clusters)
+
+print("Silhouette Score:", silhouette)
+print("Davies-Bouldin Index:", dbi)
+
+# Step 12: Cluster Profiling
+
+cluster_summary = rfm.groupby("Cluster").mean()
+cluster_summary["Count"] = rfm["Cluster"].value_counts()
+cluster_summary
+
+
